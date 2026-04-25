@@ -130,11 +130,17 @@ export function getPost(postId) {
 
 export function deleteImportedPosts() {
   const imported = db
-    .prepare("SELECT id FROM posts WHERE author_id = 'author_imported'")
+    .prepare(
+      `SELECT p.id
+       FROM posts p
+       WHERE p.author_id = 'author_imported'
+         AND NOT EXISTS (
+           SELECT 1 FROM transactions t WHERE t.post_id = p.id
+         )`
+    )
     .all();
   const remove = db.transaction((posts) => {
     for (const post of posts) {
-      db.prepare("DELETE FROM transactions WHERE post_id = ?").run(post.id);
       db.prepare("DELETE FROM posts WHERE id = ?").run(post.id);
     }
   });
