@@ -9,6 +9,14 @@ export const config = {
   publicBaseUrl: process.env.HAYSTACK_PUBLIC_BASE_URL ?? "http://localhost:8787",
   defaultAuthorId: process.env.HAYSTACK_DEFAULT_AUTHOR_ID ?? "author_ada",
 
+  x402: {
+    receiptSecret:
+      process.env.X402_RECEIPT_SECRET ??
+      process.env.CIRCLE_ENTITY_SECRET ??
+      process.env.GEMINI_API_KEY ??
+      "haystack-local-dev-receipts",
+  },
+
   gemini: {
     apiKey: process.env.GEMINI_API_KEY ?? "",
     flashModel: process.env.GEMINI_FLASH_MODEL ?? "gemini-2.5-flash",

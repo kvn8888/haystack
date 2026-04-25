@@ -14,9 +14,14 @@ export async function searchPosts(q: string): Promise<{ posts: PostPreview[] }> 
 }
 
 export async function fetchPostPreview(
-  postId: string
+  postId: string,
+  xPayment?: string | null
 ): Promise<{ status: number; preview: Partial<FullPost> }> {
-  const r = await fetch(`/api/posts/${postId}`);
+  const headers: Record<string, string> = { "X-Reader-Type": "human" };
+  if (xPayment) headers["X-Payment"] = xPayment;
+  const r = await fetch(`/api/posts/${postId}`, {
+    headers,
+  });
   const data = await r.json();
   return { status: r.status, preview: data };
 }
@@ -26,13 +31,30 @@ export async function fetchPostPaid(
   apiKey: string,
   agent = "Reader-Web"
 ): Promise<FullPost> {
-  const r = await fetch(`/api/posts/${postId}`, {
+  const payment = await fetch(`/api/pay/${postId}`, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "X-Agent-Name": agent,
     },
   });
-  return r.json();
+  const paymentData = await payment.json();
+  if (!payment.ok || !paymentData.x_payment) {
+    throw new Error(
+      paymentData?.detail?.message ||
+        paymentData?.error ||
+        `Payment failed (${payment.status})`
+    );
+  }
+
+  const full = await fetch(`/api/posts/${postId}`, {
+    headers: { "X-Payment": paymentData.x_payment },
+  });
+  const data = await full.json();
+  if (!full.ok || !data.body_full) {
+    throw new Error(data?.error || `Unlock failed (${full.status})`);
+  }
+  return { ...data, x_payment: paymentData.x_payment };
 }
 
 export async function runAgent(
@@ -54,13 +76,20 @@ export async function fetchDashboard(): Promise<DashboardResponse> {
 }
 
 export async function importRss(
-  rss_url: string
-): Promise<{ imported_count: number; posts: FullPost[] }> {
+  rss_url: string,
+  reset_previous = true,
+  limit = 100
+): Promise<{ deleted_count: number; imported_count: number; longform_count?: number; posts: FullPost[] }> {
   const r = await fetch("/api/migration/import-rss", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rss_url }),
+    body: JSON.stringify({ rss_url, reset_previous, limit }),
   });
+  return r.json();
+}
+
+export async function clearImportedPosts(): Promise<{ deleted_count: number }> {
+  const r = await fetch("/api/migration/imports", { method: "DELETE" });
   return r.json();
 }
 

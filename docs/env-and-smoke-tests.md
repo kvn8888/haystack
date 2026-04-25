@@ -71,6 +71,7 @@ needs to know which token to send on `ARC-TESTNET`. `ARC_RPC_URL` and
 | `PORT`                              | 8787                                             | Backend listens here                                            |
 | `HAYSTACK_PUBLIC_BASE_URL`          | [http://localhost:8787](http://localhost:8787)   | Used in 402 payment endpoint headers if/when externalized       |
 | `HAYSTACK_DEFAULT_AUTHOR_ID`        | author_ada                                       | Author the composer publishes as                                |
+| `X402_RECEIPT_SECRET`               | derived from Circle/Gemini secret                | HMAC secret for signed `X-Payment` receipts                     |
 | `GEMINI_API_KEY`                    | —                                                | Switches `/api/agent/query` to a real Gemini tool-calling loop  |
 | `GEMINI_FLASH_MODEL`                | gemini-flash-latest                              | Light tool calls (search, balance)                              |
 | `GEMINI_PRO_MODEL`                  | gemini-pro-latest                                | Synthesis + selection                                           |
@@ -135,6 +136,23 @@ curl -s -H "Authorization: Bearer hs_demo_gemini" \
   | jq '{title, access_policy, price_per_read, tx: {provider: .tx.provider, provider_tx_id: .tx.provider_tx_id, status: .tx.settlement_status, hash: .tx.arc_tx_hash, explorer: .tx.arc_explorer_url}}'
 ```
 
+### 2.5. Native x402-style pay + retry
+
+```bash
+PAYMENT=$(curl -s -X POST "http://localhost:8787/api/pay/$POST_ID" \
+  -H "Authorization: Bearer hs_demo_gemini" \
+  -H "X-Agent-Name: Native-x402-Smoke" \
+  | jq -r '.x_payment')
+
+curl -s "http://localhost:8787/api/posts/$POST_ID" \
+  -H "X-Payment: $PAYMENT" \
+  | jq '{title, tx: {provider: .tx.provider, provider_tx_id: .tx.provider_tx_id, status: .tx.settlement_status}}'
+```
+
+This exercises the native retry shape: first pay the payment endpoint, then
+present the signed receipt in `X-Payment` to retrieve the full post without a
+second charge.
+
 ### 3. Composer (always live)
 
 ```bash
@@ -194,6 +212,18 @@ You should see one `{"type":"settlement","tx":{...,"provider":"circle-w3s"}}`
 event per paid read. If Circle returns an Arc `txHash` and
 `ARC_EXPLORER_BASE_URL` is set, `arc_explorer_url` will be populated.
 
+### 6.5. Reconcile Circle provider transactions
+
+```bash
+curl -s -X POST http://localhost:8787/api/settlement/reconcile \
+  -H "Content-Type: application/json" \
+  -d '{"limit":25}' | jq
+```
+
+The backend also runs this reconciliation loop periodically. It polls Circle
+for pending provider transaction ids and hydrates `settlement_status` plus
+`arc_tx_hash` when available.
+
 ### 7. Writer dashboard payload (always live)
 
 ```bash
@@ -204,14 +234,29 @@ curl -s http://localhost:8787/api/dashboard \
          recent: [.live[0:3] | .[] | {agent: .agent_identifier, amt: .amount_usdc, url: .arc_explorer_url}]}'
 ```
 
+### 8. Real RSS import
+
+```bash
+curl -s -X DELETE http://localhost:8787/api/migration/imports | jq
+
+curl -s -X POST http://localhost:8787/api/migration/import-rss \
+  -H "Content-Type: application/json" \
+  -d '{"rss_url":"https://daringfireball.net/feeds/main","reset_previous":true,"limit":100}' \
+  | jq '{deleted_count, imported_count, posts: [.posts[] | {title, source_url, wallet_address}]}'
+```
+
+The import endpoint parses RSS or Atom feeds and defaults every imported post
+to AI-Metered. `reset_previous` defaults to `true` so the demo can reuse the
+same feed without accumulating duplicates. `limit` is capped at 100; the
+Daring Fireball feed currently returns fewer than that, so HayStack imports the
+full available feed.
+
 ## What is still not production-hard
 
-- **Native x402 `X-PAYMENT` facilitator flow.** The backend still uses the
-pre-funded API-key retry path and turns that into a Circle W3S transfer.
-- **Confirmation reconciliation.** Circle provider ids and returned tx hashes
-are stored, but there is no background poller that marks pending rows
-confirmed later.
-- **RSS import.** Today the import endpoint creates three canned posts so the
-staggered animation always plays. Replacing the inner array with a real
-RSS-parsed payload is a self-contained change in `backend/src/server.js`.
+- **External x402 facilitator network.** The backend has an x402-shaped pay
+endpoint and signed `X-Payment` receipts, but does not integrate an external
+facilitator service.
+- **Production reconciliation hardening.** Circle provider ids and returned tx
+hashes are stored and a poller exists, but production should add retry/backoff,
+alerting, and confirmed-only accounting rules.
 

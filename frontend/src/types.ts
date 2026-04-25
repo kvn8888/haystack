@@ -20,6 +20,7 @@ export interface FullPost {
   body_preview?: string;
   created_at?: string;
   tx?: Settlement | null;
+  x_payment?: string;
 }
 
 export interface Settlement {
@@ -57,6 +58,7 @@ export interface DashboardResponse {
   totals: {
     month_human: number;
     month_ai: number;
+    transaction_count: number;
     top_readers: Array<{
       agent_identifier: string;
       reads: number;
@@ -64,10 +66,13 @@ export interface DashboardResponse {
     }>;
     post_settings: Array<{
       id: string;
+      author_id?: string;
       title: string;
+      body_preview?: string;
       access_policy: AccessPolicy;
       price_per_read: number;
       human_price: number | null;
+      created_at?: string;
     }>;
   };
   live: Settlement[];

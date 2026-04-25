@@ -23,27 +23,38 @@ export function ArticleView({ post, ledger, onBack }: Props) {
   const [previewBody, setPreviewBody] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const receiptKey = `haystack:x-payment:${post.id}`;
 
   useEffect(() => {
     setUnlocked(null);
     setPreviewBody("");
+    setError(null);
     let alive = true;
     setLoading(true);
-    fetchPostPreview(post.id).then(({ status, preview }) => {
+    const receipt = window.localStorage.getItem(receiptKey);
+    fetchPostPreview(post.id, receipt).then(({ status, preview }) => {
       if (!alive) return;
       setLoading(false);
       if (status === 200 && preview.body_full) {
         setUnlocked(preview as FullPost);
       } else {
+        if (receipt) window.localStorage.removeItem(receiptKey);
         setPreviewBody(
           (preview.body_preview as string) || post.body_preview || ""
         );
       }
+    }).catch((err) => {
+      if (!alive) return;
+      setLoading(false);
+      setError(err instanceof Error ? err.message : "Could not load article.");
+      setPreviewBody(post.body_preview || "");
     });
     return () => {
       alive = false;
     };
-  }, [post.id, post.body_preview]);
+  }, [post.id, post.body_preview, receiptKey]);
 
   const author = authorFor(post.author_id || unlocked?.author_id);
 
@@ -54,9 +65,15 @@ export function ArticleView({ post, ledger, onBack }: Props) {
 
   async function handlePay() {
     setPaying(true);
+    setError(null);
     try {
       const data = await fetchPostPaid(post.id, DEMO_KEY, "Reader-Web");
+      if (data.x_payment) {
+        window.localStorage.setItem(receiptKey, data.x_payment);
+      }
       setUnlocked(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Payment failed.");
     } finally {
       setPaying(false);
     }
@@ -100,6 +117,7 @@ export function ArticleView({ post, ledger, onBack }: Props) {
           {paragraphs.map((p, i) => (
             <p key={i}>{p}</p>
           ))}
+          {error && <p className="pay-error">{error}</p>}
           {!unlocked && !loading && (
             <div className="paywall">
               <div className="paywall-inner">

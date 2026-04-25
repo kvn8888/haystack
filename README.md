@@ -58,12 +58,15 @@ Authorization: Bearer hs_demo_claude       # $0.75 USDC
 - `GET  /api/index/search?q=...` — keyword-tokenized search over previews (free)
 - `GET  /api/wallet/balance` — check key balance
 - `GET  /api/posts/:postId` — 402 + payment metadata when unfunded; 200 + full body when paid
+- `POST /api/pay/:postId` — x402-style payment endpoint; returns signed `X-Payment` receipt
 - `POST /api/posts` — composer endpoint (title, body, access policy, price)
 - `PATCH /api/posts/:postId/settings` — inline paywall edits from the dashboard
 - `POST /api/agent/query` — real Gemini tool-calling loop when `GEMINI_API_KEY` is set, mock otherwise
 - `GET  /api/events/settlements` — SSE stream for the live ledger
 - `GET  /api/dashboard` — writer metrics + recent transactions (with `arc_explorer_url`)
-- `POST /api/migration/import-rss` — staged RSS import with AI-Metered defaults
+- `POST /api/settlement/reconcile` — poll Circle provider transactions and hydrate Arc hashes/status
+- `DELETE /api/migration/imports` — clear imported posts for repeatable demos
+- `POST /api/migration/import-rss` — real RSS/Atom import with AI-Metered defaults
 
 ## User stories the UI covers
 
@@ -78,8 +81,9 @@ Authorization: Bearer hs_demo_claude       # $0.75 USDC
 - Access policy model (`open`, `ai_metered`, `gated`, `premium`) with inline edit
 - x402-shaped behavior with payment headers and preview-first responses
 - Per-read writer settlement with transaction ledger and Arc-explorer URL hydration
+- x402-style pay endpoint + signed `X-Payment` receipt retry path
 - Real-time UI updates via SSE
-- Migration UX with wallet-provisioning signal
+- Migration UX with real RSS/Atom parsing and wallet-provisioning signal
 - Composer with paywall controls, live preview, and per-100/1000-read revenue projections
 - Real Gemini tool-calling loop when configured (graceful fallback to local mock otherwise)
 

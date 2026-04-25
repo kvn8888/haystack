@@ -18,13 +18,13 @@ Your backend implements the correct request/response shape for the first phase o
 
 When `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and Arc USDC config are present, the funded read path now calls Circle Developer-Controlled Wallets (W3S): it provisions `ARC-TESTNET` wallets, creates a Circle transfer from the agent treasury wallet to the author's wallet, and stores Circle's provider transaction id plus any returned Arc tx hash. If the treasury wallet has no testnet USDC, reads fail with Circle's real insufficient-asset error and no fabricated transaction is recorded.
 
-What remains incomplete for production is native signed `X-PAYMENT` ingestion/facilitator verification. The current demo path is "pre-funded API key triggers real Circle W3S transfer", not a full x402 facilitator implementation.
+The backend also exposes `POST /api/pay/:postId`, which executes the Circle W3S transfer and returns a signed `X-Payment` receipt. Retrying `GET /api/posts/:postId` with that receipt verifies the HMAC payload and serves the full content without charging twice. What remains incomplete for production is integration with an external x402 facilitator network.
 
 ## Arc Settlement Validation
 
 Your data model carries Arc settlement semantics through `arc_tx_hash`, `provider_tx_id`, `settlement_status`, and a transaction ledger. The dashboard reflects paid reads from this ledger.
 
-The Circle W3S transfer path is configured for `ARC-TESTNET` and uses Arc testnet USDC (`ARC_USDC_CONTRACT`). Explorer links are generated when Circle returns an Arc tx hash. What is still missing is a background reconciliation job that polls Circle or Arc RPC until pending provider transactions are confirmed.
+The Circle W3S transfer path is configured for `ARC-TESTNET` and uses Arc testnet USDC (`ARC_USDC_CONTRACT`). Explorer links are generated when Circle returns an Arc tx hash. A periodic reconciliation loop and `POST /api/settlement/reconcile` endpoint poll Circle provider transactions and hydrate pending rows with status/hash updates.
 
 ## Gemini Integration Validation
 
@@ -39,9 +39,12 @@ The following checks passed in local validation:
 - Unfunded post read returns HTTP 402 and payment headers.
 - Funded post read attempts a Circle W3S transfer when configured.
 - Unfunded Circle treasury returns Circle's real insufficient-asset error instead of creating a fake transaction.
+- `/api/pay/:postId` returns a signed `X-Payment` receipt after settlement.
+- `X-Payment` retry unlocks the full post without a second charge.
+- RSS/Atom import parses real feed entries instead of canned posts.
 - Wallet balance decreases after a funded read.
 - Gemini live route respects budget and returns citations when matches are found.
 
 ## Readiness Summary
 
-The platform now has real Gemini tool calling and real Circle W3S transfer wiring for Arc testnet. The remaining gap is funding the Circle agent treasury wallet with Arc testnet USDC and adding confirmation reconciliation for pending provider transactions.
+The platform now has real Gemini tool calling, real Circle W3S transfer wiring for Arc testnet, x402-style signed payment receipts, real RSS/Atom import, and Circle reconciliation. The immediate demo blocker is funding the Circle agent treasury wallet with Arc testnet USDC.

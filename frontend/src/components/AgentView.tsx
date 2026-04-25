@@ -74,8 +74,8 @@ export function AgentView() {
             <input
               type="range"
               min={0.001}
-              max={0.05}
-              step={0.001}
+              max={10}
+              step={0.005}
               value={budget}
               onChange={(e) => setBudget(Number(e.target.value))}
             />

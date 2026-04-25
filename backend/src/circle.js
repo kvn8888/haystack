@@ -189,6 +189,55 @@ export async function settleReadWithCircle({ post, amountUsdc }) {
   }
 }
 
+export async function reconcileCircleSettlements({ limit = 25 } = {}) {
+  const circle = getClient();
+  if (!circle) return { live: false, checked: 0, updated: 0, transactions: [] };
+
+  const rows = db
+    .prepare(
+      `SELECT *
+       FROM transactions
+       WHERE provider = 'circle-w3s'
+         AND provider_tx_id IS NOT NULL
+         AND settlement_status NOT IN ('confirmed', 'complete', 'failed')
+       ORDER BY settled_at ASC
+       LIMIT ?`
+    )
+    .all(limit);
+  const results = [];
+  let updated = 0;
+
+  for (const row of rows) {
+    try {
+      const response = await circle.getTransaction({ id: row.provider_tx_id });
+      const providerTx = response.data?.transaction;
+      const patch = {
+        arc_tx_hash: providerTx?.txHash || null,
+        settlement_status: providerTx?.state ? String(providerTx.state).toLowerCase() : null,
+        raw_provider_response: JSON.stringify(providerTx),
+      };
+      db.prepare(
+        `UPDATE transactions
+         SET arc_tx_hash = COALESCE(?, arc_tx_hash),
+             settlement_status = COALESCE(?, settlement_status),
+             raw_provider_response = COALESCE(?, raw_provider_response)
+         WHERE id = ?`
+      ).run(patch.arc_tx_hash, patch.settlement_status, patch.raw_provider_response, row.id);
+      const next = db.prepare("SELECT * FROM transactions WHERE id = ?").get(row.id);
+      updated += 1;
+      results.push({ id: row.id, provider_tx_id: row.provider_tx_id, status: next.settlement_status, arc_tx_hash: next.arc_tx_hash });
+    } catch (err) {
+      results.push({
+        id: row.id,
+        provider_tx_id: row.provider_tx_id,
+        error: safeCircleError(err),
+      });
+    }
+  }
+
+  return { live: true, checked: rows.length, updated, transactions: results };
+}
+
 async function balancesForWallet(walletId) {
   const circle = getClient();
   if (!circle) return { token_balances: [] };

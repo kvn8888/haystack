@@ -1,19 +1,23 @@
 import express from "express";
 import cors from "cors";
 import { config, integrations, explorerUrlFor, logStartupBanner } from "./config.js";
-import { circleSettlementStatus } from "./circle.js";
+import { circleSettlementStatus, reconcileCircleSettlements } from "./circle.js";
+import { createPaymentReceipt, verifyPaymentReceipt } from "./x402.js";
 import {
   chargeRead,
   checkCanRead,
   createPost,
   dashboardTotals,
+  deleteImportedPosts,
   getApiKey,
   getPost,
+  getTransaction,
   recentTransactions,
   searchPosts,
   updatePostSettings,
 } from "./store.js";
 import { isGeminiLive, runGeminiAgent } from "./agent.js";
+import { fetchFeedPosts } from "./rss.js";
 import "./db.js";
 import "./seed.js";
 
@@ -70,7 +74,7 @@ app.get("/api/events/settlements", (req, res) => {
   res.flushHeaders();
   sseClients.add(res);
 
-  const latest = recentTransactions(10);
+  const latest = recentTransactions(60);
   latest.reverse().forEach((tx) => {
     res.write(
       `data: ${JSON.stringify({ type: "seed", tx: decorateTx(tx) })}\n\n`
@@ -112,10 +116,36 @@ app.get("/api/posts/:postId", async (req, res) => {
     return res.status(404).json({ error: "Post not found." });
   }
 
+  const xPayment = req.header("x-payment");
+  if (xPayment) {
+    const verified = verifyPaymentReceipt(xPayment, { postId: post.id });
+    const tx = verified.ok ? getTransaction(verified.receipt.tx_id) : null;
+    if (verified.ok && tx?.post_id === post.id && tx.settlement_status !== "failed") {
+      return res.json({
+        id: post.id,
+        author_id: post.author_id,
+        created_at: post.created_at,
+        title: post.title,
+        access_policy: post.access_policy,
+        price_per_read: post.price_per_read,
+        body_full: post.body_full,
+        body_preview: post.body_preview,
+        tx: decorateTx(tx),
+      });
+    }
+    res.setHeader("X-Payment-Required", "true");
+    return res.status(402).json({
+      error: "Invalid or unrecognized X-Payment receipt.",
+      code: verified.code ?? "PAYMENT_NOT_FOUND",
+      body_preview: post.body_preview,
+    });
+  }
+
   const auth = req.header("authorization");
   const apiKey = auth?.replace("Bearer ", "");
   const agent = req.header("x-agent-name") ?? "unknown-agent";
-  const access = checkCanRead({ post, apiKey });
+  const readerType = req.header("x-reader-type") === "human" ? "human" : "agent";
+  const access = checkCanRead({ post, apiKey, readerType });
 
   if (!access.ok && access.code === "NOT_FOUND") {
     return res.status(404).json({ error: "Post not found." });
@@ -140,7 +170,7 @@ app.get("/api/posts/:postId", async (req, res) => {
     });
   }
 
-  const payment = post.access_policy === "open" ? { ok: true, tx: null } : await chargeRead({
+  const payment = access.shouldCharge === false || post.access_policy === "open" ? { ok: true, tx: null } : await chargeRead({
     post,
     apiKey,
     agentIdentifier: agent,
@@ -178,6 +208,60 @@ app.get("/api/posts/:postId", async (req, res) => {
     price_per_read: post.price_per_read,
     body_full: post.body_full,
     body_preview: post.body_preview,
+    tx: decorateTx(payment.tx),
+  });
+});
+
+app.post("/api/pay/:postId", async (req, res) => {
+  const post = getPost(req.params.postId);
+  if (!post) return res.status(404).json({ error: "Post not found." });
+  if (post.access_policy === "open") {
+    return res.json({ paid: true, message: "Post is open; no payment required." });
+  }
+
+  const auth = req.header("authorization");
+  const apiKey = auth?.replace("Bearer ", "") || req.body?.api_key;
+  if (!apiKey) {
+    return res.status(401).json({
+      error: "Missing API key for payment.",
+      detail: "Pass Authorization: Bearer <key> or api_key in JSON body.",
+    });
+  }
+
+  const payment = await chargeRead({
+    post,
+    apiKey,
+    agentIdentifier: req.header("x-agent-name") ?? "x402-client",
+  });
+
+  if (!payment.ok) {
+    if (payment.code === "INVALID_API_KEY") {
+      return res.status(401).json({ error: "Invalid API key." });
+    }
+    if (payment.code === "INSUFFICIENT_FUNDS") {
+      return res.status(402).json({ error: "Insufficient wallet balance." });
+    }
+    if (payment.code === "CIRCLE_SETTLEMENT_FAILED") {
+      return res.status(502).json({
+        error: "Circle settlement failed.",
+        detail: payment.detail,
+      });
+    }
+    return res.status(500).json({ error: "Payment failed.", code: payment.code });
+  }
+
+  const xPayment = createPaymentReceipt(payment.tx);
+  publishSettlement({
+    type: "settlement",
+    tx: payment.tx,
+    post_title: post.title,
+  });
+  res.setHeader("X-Payment", xPayment);
+  return res.json({
+    paid: true,
+    post_id: post.id,
+    retry: `/api/posts/${post.id}`,
+    x_payment: xPayment,
     tx: decorateTx(payment.tx),
   });
 });
@@ -299,8 +383,13 @@ app.post("/api/agent/query", async (req, res) => {
 
 app.get("/api/dashboard", (_req, res) => {
   const totals = dashboardTotals();
-  const live = recentTransactions(25).map(decorateTx);
+  const live = recentTransactions(100).map(decorateTx);
   res.json({ totals, live });
+});
+
+app.post("/api/settlement/reconcile", async (req, res) => {
+  const limit = Number(req.body?.limit ?? 25);
+  return res.json(await reconcileCircleSettlements({ limit }));
 });
 
 app.patch("/api/posts/:postId/settings", (req, res) => {
@@ -309,29 +398,45 @@ app.patch("/api/posts/:postId/settings", (req, res) => {
   return res.json({ post: updated });
 });
 
-app.post("/api/migration/import-rss", (req, res) => {
-  const { rss_url } = req.body ?? {};
+app.delete("/api/migration/imports", (_req, res) => {
+  const deleted_count = deleteImportedPosts();
+  return res.json({ deleted_count });
+});
+
+app.post("/api/migration/import-rss", async (req, res) => {
+  const { rss_url, reset_previous = true, limit = 100 } = req.body ?? {};
   if (!rss_url) {
     return res.status(400).json({ error: "rss_url is required" });
   }
 
-  const imported = [
-    "What a Search Index Owes Its Sources",
-    "On Paying for Freshness",
-    "Compilers, Crawlers, and the Cost of Truth",
-  ].map((title, idx) =>
-    createPost({
-      authorId: "author_imported",
-      title,
-      bodyFull:
-        "Imported from RSS. In production this would include parsed article body, normalized metadata, canonical URL, and anti-duplication checks.",
-      accessPolicy: "ai_metered",
-      pricePerRead: 0.001 + idx * 0.0005,
-      sourceUrl: rss_url,
-    })
-  );
+  try {
+    const deleted_count = reset_previous ? deleteImportedPosts() : 0;
+    const feedPosts = await fetchFeedPosts(rss_url, {
+      limit: Math.min(Math.max(Number(limit) || 100, 1), 100),
+    });
+    const imported = feedPosts.map((post, idx) =>
+      createPost({
+        authorId: "author_imported",
+        title: post.title,
+        bodyFull: post.bodyFull,
+        accessPolicy: "ai_metered",
+        pricePerRead: 0.001 + idx * 0.0005,
+        sourceUrl: post.sourceUrl ?? rss_url,
+      })
+    );
 
-  return res.status(201).json({ imported_count: imported.length, posts: imported });
+    return res.status(201).json({
+      deleted_count,
+      imported_count: imported.length,
+      longform_count: imported.filter((p) => p.body_full.length >= 2000).length,
+      posts: imported,
+    });
+  } catch (err) {
+    return res.status(502).json({
+      error: "RSS import failed.",
+      detail: err.message,
+    });
+  }
 });
 
 app.post("/api/dev/register", (_req, res) => {
@@ -345,3 +450,10 @@ app.listen(config.port, () => {
   console.log(`HayStack backend listening on http://localhost:${config.port}`);
   logStartupBanner();
 });
+
+const reconcileTimer = setInterval(() => {
+  reconcileCircleSettlements({ limit: 10 }).catch((err) => {
+    console.warn("Circle reconciliation failed:", err.message);
+  });
+}, 15_000);
+reconcileTimer.unref?.();

@@ -117,7 +117,7 @@ export async function runGeminiAgent({ query, budgetUsdc, apiKey, publish }) {
   let answer = "";
   for (let turn = 0; turn < 8; turn += 1) {
     const result = await ai.models.generateContent({
-      model: config.gemini.proModel,
+      model: config.gemini.flashModel,
       contents,
       config: {
         tools: TOOLS,

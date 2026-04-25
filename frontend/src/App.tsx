@@ -43,7 +43,7 @@ function App() {
       };
       setLedger((prev) => {
         if (prev.some((row) => row.id === normalized.id)) return prev;
-        return [normalized, ...prev].slice(0, 30);
+        return [normalized, ...prev].slice(0, 120);
       });
     };
     return () => sse.close();
@@ -110,7 +110,11 @@ function App() {
               />
             </div>
             <div className="side-col">
-              <LiveLedger ledger={ledger} total={liveTotal} />
+              <LiveLedger
+                ledger={ledger}
+                total={liveTotal}
+                transactionCount={dashboard?.totals.transaction_count}
+              />
             </div>
           </div>
         )}
@@ -150,6 +154,7 @@ function App() {
             data={dashboard}
             ledger={ledger}
             onComposeClick={() => setView("compose")}
+            onOpenPost={openPost}
             onUpdated={() => void refreshDashboard()}
           />
         )}

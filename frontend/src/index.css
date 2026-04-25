@@ -709,6 +709,16 @@ button { font-family: inherit; cursor: pointer; }
   font-weight: 600;
 }
 .paywall-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.pay-error {
+  margin: 1.2rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(199, 77, 42, 0.28);
+  border-radius: 12px;
+  background: rgba(199, 77, 42, 0.08);
+  color: #9f341f;
+  font-family: var(--ui);
+  font-size: 0.92rem;
+}
 
 .article-side { display: grid; gap: 1rem; align-content: start; position: sticky; top: 6rem; }
 .side-card {
@@ -983,6 +993,21 @@ button { font-family: inherit; cursor: pointer; }
   outline: none;
   width: 100%;
 }
+.migrate-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+.migrate-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
 .migrate-status { margin: 1.4rem 0; }
 .migrate-checks {
   list-style: none; margin: 0; padding: 0;
@@ -1185,6 +1210,22 @@ button { font-family: inherit; cursor: pointer; }
   border-bottom: 1px dashed var(--border-soft);
 }
 .settings-title-col { display: flex; flex-direction: column; gap: 0.15rem; }
+.settings-title-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.settings-title-button:hover {
+  color: var(--primary-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
 .save-tag { font-style: italic; color: var(--muted); }
 .save-tag.saved { color: var(--green); font-style: normal; }
 .settings-controls {

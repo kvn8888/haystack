@@ -106,7 +106,7 @@ export function searchPosts(query = "") {
         `SELECT id, author_id, title, body_preview, price_per_read, access_policy, created_at
          FROM posts
          ORDER BY created_at DESC
-         LIMIT 25`
+         LIMIT 100`
       )
       .all();
   }
@@ -119,7 +119,7 @@ export function searchPosts(query = "") {
        FROM posts
        WHERE ${clauses.join(" OR ")}
        ORDER BY created_at DESC
-       LIMIT 25`
+       LIMIT 100`
     )
     .all(...params);
 }
@@ -128,15 +128,36 @@ export function getPost(postId) {
   return db.prepare("SELECT * FROM posts WHERE id = ?").get(postId);
 }
 
+export function deleteImportedPosts() {
+  const imported = db
+    .prepare("SELECT id FROM posts WHERE author_id = 'author_imported'")
+    .all();
+  const remove = db.transaction((posts) => {
+    for (const post of posts) {
+      db.prepare("DELETE FROM transactions WHERE post_id = ?").run(post.id);
+      db.prepare("DELETE FROM posts WHERE id = ?").run(post.id);
+    }
+  });
+  remove(imported);
+  return imported.length;
+}
+
 export function getApiKey(apiKey) {
   return db.prepare("SELECT * FROM api_keys WHERE api_key = ?").get(apiKey);
 }
 
-export function checkCanRead({ post, apiKey }) {
+export function getTransaction(txId) {
+  return db.prepare("SELECT * FROM transactions WHERE id = ?").get(txId);
+}
+
+export function checkCanRead({ post, apiKey, readerType }) {
   if (!post) return { ok: false, code: "NOT_FOUND" };
   if (post.access_policy === "open") return { ok: true, requiresPayment: false };
+  if (readerType === "human" && post.access_policy === "ai_metered") {
+    return { ok: true, requiresPayment: false, shouldCharge: false };
+  }
   if (!apiKey) return { ok: true, requiresPayment: true };
-  return { ok: true, requiresPayment: false };
+  return { ok: true, requiresPayment: false, shouldCharge: true };
 }
 
 export async function chargeRead({ post, apiKey, agentIdentifier }) {
@@ -221,9 +242,40 @@ export function recentTransactions(limit = 20) {
     .all(limit);
 }
 
+export function pendingCircleTransactions(limit = 20) {
+  return db
+    .prepare(
+      `SELECT *
+       FROM transactions
+       WHERE provider = 'circle-w3s'
+         AND provider_tx_id IS NOT NULL
+         AND settlement_status NOT IN ('confirmed', 'complete', 'failed')
+       ORDER BY settled_at ASC
+       LIMIT ?`
+    )
+    .all(limit);
+}
+
+export function updateTransactionSettlement(txId, patch) {
+  db.prepare(
+    `UPDATE transactions
+     SET arc_tx_hash = COALESCE(?, arc_tx_hash),
+         settlement_status = COALESCE(?, settlement_status),
+         raw_provider_response = COALESCE(?, raw_provider_response)
+     WHERE id = ?`
+  ).run(
+    patch.arc_tx_hash ?? null,
+    patch.settlement_status ?? null,
+    patch.raw_provider_response ?? null,
+    txId
+  );
+  return getTransaction(txId);
+}
+
 export function dashboardTotals() {
   const totalAi = db.prepare("SELECT COALESCE(SUM(amount_usdc), 0) AS total FROM transactions").get()
     .total;
+  const txCount = db.prepare("SELECT COUNT(*) AS c FROM transactions").get().c;
   const topReaders = db
     .prepare(
       `SELECT agent_identifier, COUNT(*) AS reads, ROUND(SUM(amount_usdc), 6) AS spend
@@ -236,7 +288,7 @@ export function dashboardTotals() {
 
   const postSettings = db
     .prepare(
-      `SELECT id, title, access_policy, price_per_read, human_price
+      `SELECT id, author_id, title, body_preview, access_policy, price_per_read, human_price, created_at
        FROM posts
        ORDER BY created_at DESC`
     )
@@ -245,6 +297,7 @@ export function dashboardTotals() {
   return {
     month_human: 24.8,
     month_ai: Number(totalAi.toFixed(6)),
+    transaction_count: txCount,
     top_readers: topReaders,
     post_settings: postSettings,
   };

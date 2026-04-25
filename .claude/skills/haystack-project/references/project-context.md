@@ -23,6 +23,8 @@ The core promise is not "a paywall" but "a payment standard": previews remain pu
 - `backend/src/server.js`: Express routes, x402 response headers, SSE settlement publishing, dashboard payloads, migration stub, compose/settings endpoints.
 - `backend/src/store.js`: SQLite access layer, post creation, keyword search, API key balances, writer wallet accounting, dashboard totals, and `chargeRead()`.
 - `backend/src/circle.js`: Circle Developer-Controlled Wallets (W3S) integration for `ARC-TESTNET` wallet provisioning, treasury/author wallet lookup, and real transfer creation.
+- `backend/src/x402.js`: signed `X-Payment` receipt creation/verification for pay-then-retry content access.
+- `backend/src/rss.js`: RSS/Atom feed fetch and parsing for real migration imports.
 - `backend/src/agent.js`: real Gemini tool-calling loop when `GEMINI_API_KEY` is set. Tools are `search_haystack_index`, `check_wallet_balance`, and `read_full_post`.
 - `backend/src/config.js`: env parsing, integration status for `/api/config`, Arc explorer URL decoration, startup banner.
 - `backend/src/db.js`: SQLite connection/schema.
@@ -35,12 +37,15 @@ Important routes:
 - `GET /api/index/search?q=...`: free preview search.
 - `GET /api/wallet/balance`: API key balance.
 - `GET /api/posts/:postId`: unfunded reads return `402` + preview/payment headers; funded reads return full body + `tx`.
+- `POST /api/pay/:postId`: payment endpoint that creates a Circle settlement and returns a signed `X-Payment` receipt for retry.
 - `POST /api/posts`: author composer endpoint.
 - `PATCH /api/posts/:postId/settings`: dashboard inline paywall edit endpoint.
 - `POST /api/agent/query`: Gemini live loop when configured, local mock otherwise.
 - `GET /api/events/settlements`: SSE stream for live ledger.
 - `GET /api/dashboard`: writer metrics, recent transactions, post settings.
-- `POST /api/migration/import-rss`: currently creates staged canned import posts.
+- `POST /api/settlement/reconcile`: poll Circle provider ids and hydrate settlement status / Arc tx hash.
+- `DELETE /api/migration/imports`: clear imported posts for repeatable demos.
+- `POST /api/migration/import-rss`: parses real RSS/Atom feeds and creates AI-Metered posts. Demo default is Daring Fireball (`https://daringfireball.net/feeds/main`) with `limit: 100` and `reset_previous: true`.
 - `POST /api/dev/register`: creates a demo developer API key.
 
 ## Frontend Map
@@ -74,9 +79,9 @@ Access policies are `open`, `ai_metered`, `gated`, and `premium`.
 
 Gemini can be live. When `GEMINI_API_KEY` is set, `POST /api/agent/query` uses `@google/genai` and should return `mode: "gemini-live"`. Model slugs come from `GEMINI_FLASH_MODEL` and `GEMINI_PRO_MODEL`; do not overwrite user-provided slugs.
 
-Circle can run live through Developer-Controlled Wallets (W3S). When `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and `ARC_USDC_CONTRACT` are present, `chargeRead()` provisions/uses `ARC-TESTNET` wallets and creates a Circle transfer from the agent treasury wallet to the author's wallet. It stores `provider: circle-w3s`, `provider_tx_id`, `settlement_status`, wallet ids, and any returned Arc `txHash`. If the treasury wallet is unfunded, Circle returns an insufficient-asset error and no fake transaction is created.
+Circle can run live through Developer-Controlled Wallets (W3S). When `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and `ARC_USDC_CONTRACT` are present, `chargeRead()` provisions/uses `ARC-TESTNET` wallets and creates a Circle transfer from the agent treasury wallet to the author's wallet. It stores `provider: circle-w3s`, `provider_tx_id`, `settlement_status`, wallet ids, and any returned Arc `txHash`. If the treasury wallet is unfunded, Circle returns an insufficient-asset error and no fake transaction is created. The x402-shaped path is `POST /api/pay/:postId` followed by `GET /api/posts/:postId` with `X-Payment`.
 
-Arc env config uses `ARC-TESTNET`, chain id `5042002`, and USDC contract `0x3600000000000000000000000000000000000000`. The app decorates returned `txHash` values with `arc_explorer_url` when `ARC_EXPLORER_BASE_URL` is present. Do not claim confirmed onchain settlement until Circle/Arc returns a hash or a future reconciliation job confirms the provider transaction.
+Arc env config uses `ARC-TESTNET`, chain id `5042002`, and USDC contract `0x3600000000000000000000000000000000000000`. The app decorates returned `txHash` values with `arc_explorer_url` when `ARC_EXPLORER_BASE_URL` is present. A periodic reconciliation loop polls Circle and updates pending rows with status/hash changes.
 
 The user does not want fake demo payment events. In live Circle mode, preserve fail-closed behavior: no fallback fake tx if Circle transfer fails. Local mock behavior is only acceptable when Circle is not configured.
 
@@ -88,6 +93,7 @@ Never print secret values. When diagnosing env, report only present/empty, lengt
 
 Key env vars:
 
+- `X402_RECEIPT_SECRET`
 - `GEMINI_API_KEY`
 - `GEMINI_FLASH_MODEL`
 - `GEMINI_PRO_MODEL`
@@ -117,6 +123,12 @@ curl -s http://localhost:8787/api/settlement/wallets | jq
 ```
 
 Use the `.treasury.address` value with https://faucet.circle.com/ on Arc Testnet before expecting paid reads to succeed.
+
+```bash
+PAYMENT=$(curl -s -X POST "http://localhost:8787/api/pay/$POST_ID" \
+  -H "Authorization: Bearer hs_demo_gemini" | jq -r '.x_payment')
+curl -s "http://localhost:8787/api/posts/$POST_ID" -H "X-Payment: $PAYMENT" | jq '{title, tx}'
+```
 
 ```bash
 curl -s -X POST http://localhost:8787/api/agent/query \

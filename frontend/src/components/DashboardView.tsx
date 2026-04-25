@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AccessPolicy, DashboardResponse, Settlement } from "../types";
+import type { AccessPolicy, DashboardResponse, PostPreview, Settlement } from "../types";
 import { accessLabel, fmtClock, fmtUsd } from "../utils";
 import { updatePostSettings } from "../api";
 
@@ -7,6 +7,7 @@ interface Props {
   data: DashboardResponse;
   ledger: Settlement[];
   onComposeClick: () => void;
+  onOpenPost: (post: PostPreview) => void;
   onUpdated: () => void;
 }
 
@@ -14,10 +15,11 @@ const POLICIES: AccessPolicy[] = ["open", "ai_metered", "gated", "premium"];
 
 interface RowProps {
   post: DashboardResponse["totals"]["post_settings"][number];
+  onOpenPost: (post: PostPreview) => void;
   onUpdated: () => void;
 }
 
-function PostSettingsRow({ post, onUpdated }: RowProps) {
+function PostSettingsRow({ post, onOpenPost, onUpdated }: RowProps) {
   const [policy, setPolicy] = useState<AccessPolicy>(post.access_policy);
   const [price, setPrice] = useState<number>(post.price_per_read);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
@@ -47,7 +49,23 @@ function PostSettingsRow({ post, onUpdated }: RowProps) {
   return (
     <li className="settings-row">
       <div className="settings-title-col">
-        <strong>{post.title}</strong>
+        <button
+          className="settings-title-button"
+          type="button"
+          onClick={() =>
+            onOpenPost({
+              id: post.id,
+              author_id: post.author_id,
+              title: post.title,
+              body_preview: post.body_preview ?? "",
+              access_policy: post.access_policy,
+              price_per_read: post.price_per_read,
+              created_at: post.created_at,
+            })
+          }
+        >
+          {post.title}
+        </button>
         <small>
           {accessLabel(policy)}
           {saving === "saving" && <em className="save-tag"> · saving…</em>}
@@ -81,7 +99,7 @@ function PostSettingsRow({ post, onUpdated }: RowProps) {
   );
 }
 
-export function DashboardView({ data, ledger, onComposeClick, onUpdated }: Props) {
+export function DashboardView({ data, ledger, onComposeClick, onOpenPost, onUpdated }: Props) {
   const { totals } = data;
   const sum = totals.month_human + totals.month_ai;
   const postSettings = useMemo(() => totals.post_settings, [totals.post_settings]);
@@ -95,6 +113,9 @@ export function DashboardView({ data, ledger, onComposeClick, onUpdated }: Props
             <h1>
               This month, paragraphs you wrote earned <em>${sum.toFixed(2)}</em>.
             </h1>
+            <p className="muted small">
+              {totals.transaction_count} total settlement transactions recorded
+            </p>
           </div>
           <button className="btn btn-primary" onClick={onComposeClick}>
             Write a new post
@@ -171,11 +192,18 @@ export function DashboardView({ data, ledger, onComposeClick, onUpdated }: Props
         <section className="dash-card dash-card-wide">
           <header className="card-head">
             <span>Per-post paywall</span>
-            <span className="muted small">Edits save automatically</span>
+            <span className="muted small">
+              {postSettings.length} posts · click a title to open · edits save automatically
+            </span>
           </header>
           <ul className="dash-settings">
             {postSettings.map((p) => (
-              <PostSettingsRow key={p.id} post={p} onUpdated={onUpdated} />
+              <PostSettingsRow
+                key={p.id}
+                post={p}
+                onOpenPost={onOpenPost}
+                onUpdated={onUpdated}
+              />
             ))}
           </ul>
         </section>

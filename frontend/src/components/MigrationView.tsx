@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { importRss } from "../api";
+import { clearImportedPosts, importRss } from "../api";
 import type { FullPost } from "../types";
 
 interface Props {
@@ -8,17 +8,38 @@ interface Props {
 }
 
 export function MigrationView({ onAfterImport }: Props) {
-  const [rssUrl, setRssUrl] = useState("https://example.substack.com/feed");
+  const [rssUrl, setRssUrl] = useState("https://daringfireball.net/feeds/main");
+  const [resetPrevious, setResetPrevious] = useState(true);
   const [busy, setBusy] = useState(false);
   const [imported, setImported] = useState<FullPost[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
 
   async function go(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setImported([]);
+    setMessage(null);
     try {
-      const data = await importRss(rssUrl);
+      const data = await importRss(rssUrl, resetPrevious, 100);
       setImported(data.posts);
+      setMessage(
+        `${data.imported_count} posts imported${data.longform_count ? `, ${data.longform_count} long-form` : ""}${data.deleted_count ? ` after clearing ${data.deleted_count}` : ""}.`
+      );
+      onAfterImport();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Import failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPrevious() {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const data = await clearImportedPosts();
+      setImported([]);
+      setMessage(`${data.deleted_count} imported posts cleared.`);
       onAfterImport();
     } finally {
       setBusy(false);
@@ -50,6 +71,22 @@ export function MigrationView({ onAfterImport }: Props) {
           {busy ? "Provisioning wallets…" : "Import feed"}
         </button>
       </form>
+
+      <div className="migrate-options">
+        <label>
+          <input
+            type="checkbox"
+            checked={resetPrevious}
+            onChange={(e) => setResetPrevious(e.target.checked)}
+          />
+          Clear previous imported posts before import
+        </label>
+        <button className="btn btn-ghost" type="button" disabled={busy} onClick={clearPrevious}>
+          Clear imports
+        </button>
+      </div>
+
+      {message && <p className="muted small">{message}</p>}
 
       <div className="migrate-status">
         <ul className="migrate-checks">

@@ -4,9 +4,11 @@ import { fmtClock, fmtUsd } from "../utils";
 interface Props {
   ledger: Settlement[];
   total: number;
+  transactionCount?: number;
 }
 
-export function LiveLedger({ ledger, total }: Props) {
+export function LiveLedger({ ledger, total, transactionCount }: Props) {
+  const count = transactionCount ?? ledger.length;
   return (
     <aside className="ledger-card">
       <header className="ledger-head">
@@ -35,6 +37,10 @@ export function LiveLedger({ ledger, total }: Props) {
       <footer className="ledger-foot">
         <span>Session total</span>
         <span className="ledger-total">{fmtUsd(total)}</span>
+      </footer>
+      <footer className="ledger-foot">
+        <span>Transactions</span>
+        <span className="ledger-total">{count}</span>
       </footer>
     </aside>
   );
