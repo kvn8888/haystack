@@ -8,8 +8,11 @@ import type {
   PostPreview,
 } from "./types";
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const apiUrl = (path: string) => (API_BASE ? `${API_BASE}${path}` : path);
+
 export async function searchPosts(q: string): Promise<{ posts: PostPreview[] }> {
-  const r = await fetch(`/api/index/search?q=${encodeURIComponent(q)}`);
+  const r = await fetch(apiUrl(`/api/index/search?q=${encodeURIComponent(q)}`));
   return r.json();
 }
 
@@ -19,7 +22,7 @@ export async function fetchPostPreview(
 ): Promise<{ status: number; preview: Partial<FullPost> }> {
   const headers: Record<string, string> = { "X-Reader-Type": "human" };
   if (xPayment) headers["X-Payment"] = xPayment;
-  const r = await fetch(`/api/posts/${postId}`, {
+  const r = await fetch(apiUrl(`/api/posts/${postId}`), {
     headers,
   });
   const data = await r.json();
@@ -31,7 +34,7 @@ export async function fetchPostPaid(
   apiKey: string,
   agent = "Reader-Web"
 ): Promise<FullPost> {
-  const payment = await fetch(`/api/pay/${postId}`, {
+  const payment = await fetch(apiUrl(`/api/pay/${postId}`), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -47,7 +50,7 @@ export async function fetchPostPaid(
     );
   }
 
-  const full = await fetch(`/api/posts/${postId}`, {
+  const full = await fetch(apiUrl(`/api/posts/${postId}`), {
     headers: { "X-Payment": paymentData.x_payment },
   });
   const data = await full.json();
@@ -62,7 +65,7 @@ export async function runAgent(
   budget: number,
   apiKey: string
 ): Promise<AgentResponse> {
-  const r = await fetch("/api/agent/query", {
+  const r = await fetch(apiUrl("/api/agent/query"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, budget_usdc: budget, api_key: apiKey }),
@@ -71,7 +74,7 @@ export async function runAgent(
 }
 
 export async function fetchDashboard(): Promise<DashboardResponse> {
-  const r = await fetch("/api/dashboard");
+  const r = await fetch(apiUrl("/api/dashboard"));
   return r.json();
 }
 
@@ -80,7 +83,7 @@ export async function importRss(
   reset_previous = true,
   limit = 100
 ): Promise<{ deleted_count: number; imported_count: number; longform_count?: number; posts: FullPost[] }> {
-  const r = await fetch("/api/migration/import-rss", {
+  const r = await fetch(apiUrl("/api/migration/import-rss"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rss_url, reset_previous, limit }),
@@ -89,14 +92,14 @@ export async function importRss(
 }
 
 export async function clearImportedPosts(): Promise<{ deleted_count: number }> {
-  const r = await fetch("/api/migration/imports", { method: "DELETE" });
+  const r = await fetch(apiUrl("/api/migration/imports"), { method: "DELETE" });
   return r.json();
 }
 
 export async function createPost(
   input: ComposeInput
 ): Promise<{ post: FullPost }> {
-  const r = await fetch("/api/posts", {
+  const r = await fetch(apiUrl("/api/posts"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -112,7 +115,7 @@ export async function updatePostSettings(
   postId: string,
   patch: { access_policy?: AccessPolicy; price_per_read?: number; human_price?: number | null }
 ): Promise<{ post: FullPost }> {
-  const r = await fetch(`/api/posts/${postId}/settings`, {
+  const r = await fetch(apiUrl(`/api/posts/${postId}/settings`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -121,6 +124,6 @@ export async function updatePostSettings(
 }
 
 export async function fetchConfig(): Promise<AppConfig> {
-  const r = await fetch("/api/config");
+  const r = await fetch(apiUrl("/api/config"));
   return r.json();
 }
