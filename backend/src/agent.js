@@ -60,8 +60,8 @@ export function isGeminiLive() {
   return integrations.gemini.live;
 }
 
-function searchTool(query) {
-  const posts = searchPosts(query);
+async function searchTool(query) {
+  const posts = await searchPosts(query);
   return {
     posts: posts.map((p) => ({
       id: p.id,
@@ -74,14 +74,14 @@ function searchTool(query) {
   };
 }
 
-function balanceTool(apiKey) {
-  const key = getApiKey(apiKey);
+async function balanceTool(apiKey) {
+  const key = await getApiKey(apiKey);
   if (!key) return { ok: false, error: "Unknown API key." };
   return { ok: true, name: key.name, balance_usdc: key.balance_usdc };
 }
 
 async function readTool({ postId, apiKey, publish }) {
-  const post = getPost(postId);
+  const post = await getPost(postId);
   if (!post) return { ok: false, error: "Post not found." };
   const charge = await chargeRead({
     post,
@@ -147,12 +147,12 @@ export async function runGeminiAgent({ query, budgetUsdc, apiKey, publish }) {
       const { name, args } = call.functionCall;
       let response;
       if (name === "search_haystack_index") {
-        response = searchTool(String(args?.query ?? query));
+        response = await searchTool(String(args?.query ?? query));
       } else if (name === "check_wallet_balance") {
-        response = balanceTool(apiKey);
+        response = await balanceTool(apiKey);
       } else if (name === "read_full_post") {
         const postId = String(args?.post_id ?? "");
-        const post = getPost(postId);
+        const post = await getPost(postId);
         if (post && spent + post.price_per_read > budgetUsdc) {
           response = { ok: false, error: "OVER_BUDGET" };
         } else {

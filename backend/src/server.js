@@ -67,14 +67,14 @@ app.get("/api/settlement/wallets", async (_req, res) => {
   }
 });
 
-app.get("/api/events/settlements", (req, res) => {
+app.get("/api/events/settlements", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders();
   sseClients.add(res);
 
-  const latest = recentTransactions(60);
+  const latest = await recentTransactions(60);
   latest.reverse().forEach((tx) => {
     res.write(
       `data: ${JSON.stringify({ type: "seed", tx: decorateTx(tx) })}\n\n`
@@ -86,20 +86,20 @@ app.get("/api/events/settlements", (req, res) => {
   });
 });
 
-app.get("/api/index/search", (req, res) => {
+app.get("/api/index/search", async (req, res) => {
   const query = String(req.query.q ?? "");
-  const posts = searchPosts(query);
+  const posts = await searchPosts(query);
   res.json({ query, posts });
 });
 
-app.get("/api/wallet/balance", (req, res) => {
+app.get("/api/wallet/balance", async (req, res) => {
   const auth = req.header("authorization");
   const apiKey = auth?.replace("Bearer ", "");
   if (!apiKey) {
     return res.status(400).json({ error: "Missing Authorization header." });
   }
 
-  const key = getApiKey(apiKey);
+  const key = await getApiKey(apiKey);
   if (!key) {
     return res.status(404).json({ error: "Unknown API key." });
   }
@@ -111,7 +111,7 @@ app.get("/api/wallet/balance", (req, res) => {
 });
 
 app.get("/api/posts/:postId", async (req, res) => {
-  const post = getPost(req.params.postId);
+  const post = await getPost(req.params.postId);
   if (!post) {
     return res.status(404).json({ error: "Post not found." });
   }
@@ -119,7 +119,7 @@ app.get("/api/posts/:postId", async (req, res) => {
   const xPayment = req.header("x-payment");
   if (xPayment) {
     const verified = verifyPaymentReceipt(xPayment, { postId: post.id });
-    const tx = verified.ok ? getTransaction(verified.receipt.tx_id) : null;
+    const tx = verified.ok ? await getTransaction(verified.receipt.tx_id) : null;
     if (verified.ok && tx?.post_id === post.id && tx.settlement_status !== "failed") {
       return res.json({
         id: post.id,
@@ -213,7 +213,7 @@ app.get("/api/posts/:postId", async (req, res) => {
 });
 
 app.post("/api/pay/:postId", async (req, res) => {
-  const post = getPost(req.params.postId);
+  const post = await getPost(req.params.postId);
   if (!post) return res.status(404).json({ error: "Post not found." });
   if (post.access_policy === "open") {
     return res.json({ paid: true, message: "Post is open; no payment required." });
@@ -266,7 +266,7 @@ app.post("/api/pay/:postId", async (req, res) => {
   });
 });
 
-app.post("/api/posts", (req, res) => {
+app.post("/api/posts", async (req, res) => {
   const {
     title,
     body_full,
@@ -293,7 +293,7 @@ app.post("/api/posts", (req, res) => {
     return res.status(400).json({ error: "price_per_read must be 0–1 USDC" });
   }
 
-  const post = createPost({
+  const post = await createPost({
     authorId: author_id || config.defaultAuthorId,
     title: title.trim(),
     bodyFull: body_full.trim(),
@@ -334,7 +334,7 @@ app.post("/api/agent/query", async (req, res) => {
     }
   }
 
-  const candidates = searchPosts(String(query));
+  const candidates = await searchPosts(String(query));
   const chosen = [];
   let spent = 0;
   for (const post of candidates) {
@@ -346,7 +346,7 @@ app.post("/api/agent/query", async (req, res) => {
 
   const reads = [];
   for (const post of chosen) {
-    const full = getPost(post.id);
+    const full = await getPost(post.id);
     const payment = await chargeRead({
       post: full,
       apiKey: api_key,
@@ -381,9 +381,9 @@ app.post("/api/agent/query", async (req, res) => {
   });
 });
 
-app.get("/api/dashboard", (_req, res) => {
-  const totals = dashboardTotals();
-  const live = recentTransactions(100).map(decorateTx);
+app.get("/api/dashboard", async (_req, res) => {
+  const totals = await dashboardTotals();
+  const live = (await recentTransactions(100)).map(decorateTx);
   res.json({ totals, live });
 });
 
@@ -392,14 +392,14 @@ app.post("/api/settlement/reconcile", async (req, res) => {
   return res.json(await reconcileCircleSettlements({ limit }));
 });
 
-app.patch("/api/posts/:postId/settings", (req, res) => {
-  const updated = updatePostSettings(req.params.postId, req.body ?? {});
+app.patch("/api/posts/:postId/settings", async (req, res) => {
+  const updated = await updatePostSettings(req.params.postId, req.body ?? {});
   if (!updated) return res.status(404).json({ error: "Post not found." });
   return res.json({ post: updated });
 });
 
-app.delete("/api/migration/imports", (_req, res) => {
-  const deleted_count = deleteImportedPosts();
+app.delete("/api/migration/imports", async (_req, res) => {
+  const deleted_count = await deleteImportedPosts();
   return res.json({ deleted_count });
 });
 
@@ -410,20 +410,22 @@ app.post("/api/migration/import-rss", async (req, res) => {
   }
 
   try {
-    const deleted_count = reset_previous ? deleteImportedPosts() : 0;
+    const deleted_count = reset_previous ? await deleteImportedPosts() : 0;
     const feedPosts = await fetchFeedPosts(rss_url, {
       limit: Math.min(Math.max(Number(limit) || 100, 1), 100),
     });
-    const imported = feedPosts.map((post, idx) =>
-      createPost({
+    const imported = [];
+    for (let idx = 0; idx < feedPosts.length; idx += 1) {
+      const post = feedPosts[idx];
+      imported.push(await createPost({
         authorId: "author_imported",
         title: post.title,
         bodyFull: post.bodyFull,
         accessPolicy: "ai_metered",
         pricePerRead: 0.001 + idx * 0.0005,
         sourceUrl: post.sourceUrl ?? rss_url,
-      })
-    );
+      }));
+    }
 
     return res.status(201).json({
       deleted_count,

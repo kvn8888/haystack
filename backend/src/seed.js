@@ -1,4 +1,4 @@
-import { db } from "./db.js";
+import { sqlGet, sqlRun } from "./db.js";
 import { createPost, upsertApiKey } from "./store.js";
 
 // Bump SEED_VERSION whenever the seed content changes meaningfully.
@@ -79,38 +79,34 @@ const seedPosts = [
   },
 ];
 
-const currentSeedVersion = db
-  .prepare("SELECT value FROM meta WHERE key = 'seed_version'")
-  .get()?.value;
+const currentSeedVersion = (await sqlGet("SELECT value FROM meta WHERE key = 'seed_version'"))?.value;
 
 if (currentSeedVersion !== SEED_VERSION) {
-  // Reseed posts (and dependent transactions) with the new content set.
-  // writer_wallets are intentionally preserved so deposit balances remain stable.
-  const reseed = db.transaction(() => {
-    db.prepare("DELETE FROM transactions").run();
-    db.prepare("DELETE FROM posts").run();
-    seedPosts.forEach((post) => createPost(post));
-    db.prepare(
-      "INSERT INTO meta (key, value) VALUES ('seed_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-    ).run(SEED_VERSION);
-  });
-  reseed();
+  await sqlRun("DELETE FROM transactions");
+  await sqlRun("DELETE FROM posts");
+  for (const post of seedPosts) {
+    await createPost(post);
+  }
+  await sqlRun(
+    "INSERT INTO meta (key, value) VALUES ('seed_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    [SEED_VERSION]
+  );
   console.log(`Seeded ${seedPosts.length} posts (version ${SEED_VERSION}).`);
 }
 
-upsertApiKey({
+await upsertApiKey({
   id: "key_demo_gemini",
   name: "Gemini",
   apiKey: "hs_demo_gemini",
   balanceUsdc: 1.5,
 });
-upsertApiKey({
+await upsertApiKey({
   id: "key_demo_perplexity",
   name: "Perplexity",
   apiKey: "hs_demo_perplexity",
   balanceUsdc: 0.75,
 });
-upsertApiKey({
+await upsertApiKey({
   id: "key_demo_claude",
   name: "Claude-Web",
   apiKey: "hs_demo_claude",

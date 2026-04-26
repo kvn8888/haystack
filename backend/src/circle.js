@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
 import { config, integrations } from "./config.js";
-import { db } from "./db.js";
+import { sqlAll, sqlGet, sqlRun } from "./db.js";
 
 const WALLET_SET_NAME = "HayStack Demo Wallet Set";
 const AGENT_TREASURY_REF = "haystack-agent-treasury";
@@ -29,16 +29,19 @@ function getClient() {
   return client;
 }
 
-function getMeta(key) {
-  return db.prepare("SELECT value FROM meta WHERE key = ?").get(key)?.value ?? null;
+async function getMeta(key) {
+  const row = await sqlGet("SELECT value FROM meta WHERE key = ?", [key]);
+  return row?.value ?? null;
 }
 
-function setMeta(key, value) {
-  db.prepare(
+async function setMeta(key, value) {
+  await sqlRun(
     `INSERT INTO meta (key, value)
      VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(key, value);
+    ,
+    [key, value]
+  );
 }
 
 function walletRefForAuthor(authorId) {
@@ -64,20 +67,20 @@ function formatUsdc(amount) {
 }
 
 async function ensureWalletSet(circle) {
-  const cachedId = getMeta("circle_wallet_set_id");
+  const cachedId = await getMeta("circle_wallet_set_id");
   if (cachedId) {
     try {
       const existing = await circle.getWalletSet({ id: cachedId });
       if (existing.data?.walletSet?.id) return existing.data.walletSet;
     } catch {
-      setMeta("circle_wallet_set_id", "");
+      await setMeta("circle_wallet_set_id", "");
     }
   }
 
   const listed = await circle.listWalletSets({ pageSize: 50 });
   const found = (listed.data?.walletSets ?? []).find((w) => w.name === WALLET_SET_NAME);
   if (found?.id) {
-    setMeta("circle_wallet_set_id", found.id);
+    await setMeta("circle_wallet_set_id", found.id);
     return found;
   }
 
@@ -87,7 +90,7 @@ async function ensureWalletSet(circle) {
   });
   const walletSet = created.data?.walletSet;
   if (!walletSet?.id) throw new Error("Circle did not return a wallet set id");
-  setMeta("circle_wallet_set_id", walletSet.id);
+  await setMeta("circle_wallet_set_id", walletSet.id);
   return walletSet;
 }
 
@@ -131,11 +134,13 @@ export async function ensureAuthorCircleWallet(authorId) {
     name: displayNameForAuthor(authorId),
   });
 
-  db.prepare(
+  await sqlRun(
     `UPDATE writer_wallets
      SET circle_wallet_id = ?, arc_wallet_address = ?
      WHERE author_id = ?`
-  ).run(wallet.id, wallet.address, authorId);
+    ,
+    [wallet.id, wallet.address, authorId]
+  );
 
   return wallet;
 }
@@ -193,8 +198,7 @@ export async function reconcileCircleSettlements({ limit = 25 } = {}) {
   const circle = getClient();
   if (!circle) return { live: false, checked: 0, updated: 0, transactions: [] };
 
-  const rows = db
-    .prepare(
+  const rows = await sqlAll(
       `SELECT *
        FROM transactions
        WHERE provider = 'circle-w3s'
@@ -202,8 +206,9 @@ export async function reconcileCircleSettlements({ limit = 25 } = {}) {
          AND settlement_status NOT IN ('confirmed', 'complete', 'failed')
        ORDER BY settled_at ASC
        LIMIT ?`
-    )
-    .all(limit);
+    ,
+    [limit]
+  );
   const results = [];
   let updated = 0;
 
@@ -216,14 +221,16 @@ export async function reconcileCircleSettlements({ limit = 25 } = {}) {
         settlement_status: providerTx?.state ? String(providerTx.state).toLowerCase() : null,
         raw_provider_response: JSON.stringify(providerTx),
       };
-      db.prepare(
+      await sqlRun(
         `UPDATE transactions
          SET arc_tx_hash = COALESCE(?, arc_tx_hash),
              settlement_status = COALESCE(?, settlement_status),
              raw_provider_response = COALESCE(?, raw_provider_response)
          WHERE id = ?`
-      ).run(patch.arc_tx_hash, patch.settlement_status, patch.raw_provider_response, row.id);
-      const next = db.prepare("SELECT * FROM transactions WHERE id = ?").get(row.id);
+        ,
+        [patch.arc_tx_hash, patch.settlement_status, patch.raw_provider_response, row.id]
+      );
+      const next = await sqlGet("SELECT * FROM transactions WHERE id = ?", [row.id]);
       updated += 1;
       results.push({ id: row.id, provider_tx_id: row.provider_tx_id, status: next.settlement_status, arc_tx_hash: next.arc_tx_hash });
     } catch (err) {
